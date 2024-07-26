@@ -1,8 +1,13 @@
 import logging
+import argparse
 from pyspark.sql import SparkSession
+import pyspark.sql.functions as F
+from pyspark.sql import Window
 from utils.logging_config import setup_logging
 from utils.validate_json_schema import validate_jsonl
 from utils.read_pyspark import JSONDataProcessor
+
+from src.score_images import ImageProcessor
 
 # Setup logging configuration
 setup_logging()
@@ -37,14 +42,7 @@ class DataLoader:
     def load_main_images(self, main_images_dir):
         return self.df_loader.load_main_images(main_images_dir)
 
-class DataJoiner:
-    """Class to join DataFrames."""
-    @staticmethod
-    def join_data(df_imgs, df_tags, join_col_name):
-        logger.info(f"Joining images and tags on column: {join_col_name}")
-        df_imgs_tags = df_imgs.join(df_tags, [join_col_name], "left")
-        logger.info(f"Joined dataframe count: {df_imgs_tags.count()}")
-        return df_imgs_tags
+
 
 class ImageTagProcessor:
     """Main class to process image and tag datasets."""
@@ -75,10 +73,22 @@ class ImageTagProcessor:
             df_main_imgs = loader.load_main_images(self.main_images_dir)
 
             # Join data
-            df_imgs_tags = DataJoiner.join_data(df_imgs, df_tags, self.join_col_name)
+            df_imgs_tags = df_imgs.join(df_tags, [self.join_col_name] , "left" )
 
-            # Additional processing can be added here
+            # Aggregate data to get the maximum probability for each image
+            # Define window specification
+            window_spec = Window.partitionBy("image_id").orderBy(F.col("probability").desc())
 
+            # Rank rows within each partition
+            df_ranked = df_imgs_tags.withColumn("rank", F.row_number().over(window_spec))
+
+            # Filter rows to get only the highest-ranked rows for each image_id
+            df_filtered = df_ranked.filter(F.col("rank") == 1).drop("rank")
+
+
+            # Score images
+            image_score = ImageProcessor(spark ,df_filtered)
+            image_score.process_images().toPandas().to_csv("output/images_scores.csv")
         except Exception as ex:
             logger.error(f"An error occurred: {ex}")
             raise
@@ -89,18 +99,37 @@ if __name__ == "__main__":
         .appName("JoinWithDirectory") \
         .getOrCreate()
 
+
+    # Get Arguments from CLI
+    parser = argparse.ArgumentParser(description="Process and join image and tag datasets, generate CDC, snapshot, and metrics.")
+    parser.add_argument('--images', type=str, required=True, help='Path to the images JSONL file.')
+    parser.add_argument('--tags', type=str, required=True, help='Path to the image tags JSONL file.')
+    parser.add_argument('--main_images', type=str, required=True, help='Path to the main images JSONL file.')
+    # parser.add_argument('--output_cdc', type=str, required=True, help='Path to write CDC JSONL file(s).')
+    # parser.add_argument('--output_snapshot', type=str, required=True, help='Path to write snapshot JSONL file(s).')
+    # parser.add_argument('--output_metrics', type=str, required=True, help='Path to write metrics JSONL file.')
+
+    args = parser.parse_args()
+    
     # Define paths and schemas
-    images_dir = 'data/images.jsonl'
-    image_tags_dir = 'data/image_tags.jsonl'
-    main_images_dir = 'data/main_images.jsonl'
+    images_dir = args.images #'data/images.jsonl'
+    image_tags_dir = args.tags #'data/image_tags.jsonl'
+    main_images_dir = args.main_images #'data/main_images.jsonl'
     images_dir_schema = 'schemas/image.json'
     image_tags_dir_schema = 'schemas/image_tags.json'
     main_images_dir_schema = 'schemas/main_image.json'
     join_col_name = "image_id"
 
     # Create the processor and run the main processing function
-    processor = ImageTagProcessor(spark, images_dir, image_tags_dir, main_images_dir, images_dir_schema, image_tags_dir_schema, main_images_dir_schema, join_col_name)
-    processor.process()
+    processor = ImageTagProcessor(spark,
+                                  images_dir,
+                                  image_tags_dir,
+                                  main_images_dir, 
+                                  images_dir_schema, 
+                                  image_tags_dir_schema, 
+                                  main_images_dir_schema, 
+                                  join_col_name)
+    df = processor.process()
 
     # Stop Spark session
     spark.stop()

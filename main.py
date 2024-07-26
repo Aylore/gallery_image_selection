@@ -1,71 +1,106 @@
-from src.join_chuncks import join_with_directory
-from utils.create_chunks import chunk_json_file
-from pyspark.sql import SparkSession
 import logging
+from pyspark.sql import SparkSession
+from utils.logging_config import setup_logging
+from utils.validate_json_schema import validate_jsonl
+from utils.read_pyspark import JSONDataProcessor
 
-def setup_logging():
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Setup logging configuration
+setup_logging()
+logger = logging.getLogger(__name__)
 
-def main(spark, images_dir, image_tags_dir, join_col_name="image_id", split_to_chunks=None, num_of_chunks=None):
-    """
-    Main function to join image and tag datasets, with optional chunking for large datasets.
+class DataValidator:
+    """Class to validate JSONL files against their schemas."""
+    def __init__(self, files_with_schemas):
+        self.files_with_schemas = files_with_schemas
 
-    :param spark: SparkSession object.
-    :param images_dir: Path to the images JSONL file.
-    :param image_tags_dir: Path to the image tags JSONL file.
-    :param join_col_name: Column name to join on.
-    :param split_to_chunks: Specifies which files to split into chunks ('images', 'tags', 'both', or None).
-    :param num_of_chunks: Number of chunks to split the files into.
-    """
-    try:
-        if  num_of_chunks:
-            raise ValueError("")
+    def validate(self):
+        for file_path, schema in self.files_with_schemas:
+            try:
+                validate_jsonl(file_path=file_path, schema=schema, transfer_invalid=False)
+                logger.info(f"File {file_path} validated successfully against schema {schema}.")
+            except Exception as ex:
+                logger.error(f"Validation failed for {file_path}: {ex}")
+                raise
 
-        # Read images and tags JSONL files
-        df_imgs = spark.read.json(images_dir)
-        df_tags = spark.read.json(image_tags_dir)
+class DataLoader:
+    """Class to load JSONL files into DataFrames."""
+    def __init__(self, spark):
+        self.spark = spark
+        self.df_loader = JSONDataProcessor(spark)
 
-        # Join images and tags dataframes
-        logging.info(f"Joining images and tags on column: {join_col_name}")
+    def load_images(self, images_dir):
+        return self.df_loader.load_images(images_dir)
+
+    def load_image_tags(self, image_tags_dir):
+        return self.df_loader.load_images_tags(image_tags_dir)
+
+    def load_main_images(self, main_images_dir):
+        return self.df_loader.load_main_images(main_images_dir)
+
+class DataJoiner:
+    """Class to join DataFrames."""
+    @staticmethod
+    def join_data(df_imgs, df_tags, join_col_name):
+        logger.info(f"Joining images and tags on column: {join_col_name}")
         df_imgs_tags = df_imgs.join(df_tags, [join_col_name], "left")
-        logging.info(f"Joined dataframe count: {df_imgs_tags.count()}")
+        logger.info(f"Joined dataframe count: {df_imgs_tags.count()}")
+        return df_imgs_tags
 
-    except Exception as ex:
-        if not num_of_chunks:
-            logging.error(f"Could not join images with tags due to: {ex}")
-        logging.info("Attempting to split the files into chunks")
+class ImageTagProcessor:
+    """Main class to process image and tag datasets."""
+    def __init__(self, spark, images_dir, image_tags_dir, main_images_dir, images_dir_schema, image_tags_dir_schema, main_images_dir_schema, join_col_name="image_id"):
+        self.spark = spark
+        self.images_dir = images_dir
+        self.image_tags_dir = image_tags_dir
+        self.main_images_dir = main_images_dir
+        self.images_dir_schema = images_dir_schema
+        self.image_tags_dir_schema = image_tags_dir_schema
+        self.main_images_dir_schema = main_images_dir_schema
+        self.join_col_name = join_col_name
 
-        # Split JSONL files into chunks
-        if split_to_chunks:
-            if split_to_chunks in ["images", "tags", "both"]:
-                paths_to_split = [images_dir] if split_to_chunks == "images" else [image_tags_dir]
-                if split_to_chunks == "both":
-                    paths_to_split = [images_dir, image_tags_dir]
+    def process(self):
+        try:
+            # Validate files
+            validator = DataValidator([
+                (self.images_dir, self.images_dir_schema),
+                (self.image_tags_dir, self.image_tags_dir_schema),
+                (self.main_images_dir, self.main_images_dir_schema)
+            ])
+            validator.validate()
 
-                output_dirs = [path.replace(".jsonl", "_chunks/") for path in paths_to_split]
+            # Load data
+            loader = DataLoader(self.spark)
+            df_imgs = loader.load_images(self.images_dir)
+            df_tags = loader.load_image_tags(self.image_tags_dir)
+            df_main_imgs = loader.load_main_images(self.main_images_dir)
 
-                for input_path, output_dir in zip(paths_to_split, output_dirs):
-                    logging.info(f"Splitting {input_path} into chunks")
-                    chunk_json_file(input_file_path=input_path, output_directory=output_dir, num_chunks=num_of_chunks)
-            else:
-                logging.warning(f"Invalid option for split_to_chunks: {split_to_chunks}")
-        else:
-            logging.warning("No split_to_chunks option provided, skipping chunking")
+            # Join data
+            df_imgs_tags = DataJoiner.join_data(df_imgs, df_tags, self.join_col_name)
+
+            # Additional processing can be added here
+
+        except Exception as ex:
+            logger.error(f"An error occurred: {ex}")
+            raise
 
 if __name__ == "__main__":
-    setup_logging()
-
     # Initialize Spark session
     spark = SparkSession.builder \
         .appName("JoinWithDirectory") \
         .getOrCreate()
 
-    # Parameters
+    # Define paths and schemas
     images_dir = 'data/images.jsonl'
     image_tags_dir = 'data/image_tags.jsonl'
+    main_images_dir = 'data/main_images.jsonl'
+    images_dir_schema = 'schemas/image.json'
+    image_tags_dir_schema = 'schemas/image_tags.json'
+    main_images_dir_schema = 'schemas/main_image.json'
     join_col_name = "image_id"
-    split_to_chunks = "both"
-    num_of_chunks = 3
 
-    # Example usage
-    main(spark, images_dir, image_tags_dir, join_col_name, split_to_chunks, num_of_chunks)
+    # Create the processor and run the main processing function
+    processor = ImageTagProcessor(spark, images_dir, image_tags_dir, main_images_dir, images_dir_schema, image_tags_dir_schema, main_images_dir_schema, join_col_name)
+    processor.process()
+
+    # Stop Spark session
+    spark.stop()

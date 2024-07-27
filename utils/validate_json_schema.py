@@ -1,7 +1,7 @@
 import json
 import jsonschema
 from jsonschema import validate
-from utils.read_json import read_json, read_jsonl
+from utils.read_json import JSONFileProcessor
 
 
 import logging 
@@ -19,6 +19,7 @@ def write_jsonl(data, file_path):
     :param data: List of JSON objects.
     :param file_path: Path to the output JSONL file.
     """
+    
     with open(file_path, 'w') as file:
         for record in data:
             file.write(json.dumps(record) + '\n')
@@ -33,12 +34,14 @@ def validate_jsonl(file_path, schema, transfer_invalid=False):
     :param transfer_invalid: Whether to write invalid records to a separate file.
     :return: True if validation is successful, otherwise raises a ValidationError.
     """
+    json_processor = JSONFileProcessor()
 
     logger.info(f"Validating JSONL file: {file_path}")
-    data = read_jsonl(file_path)
+    data = json_processor.read_jsonl(file_path)
     valid_data = []
     invalid_data = []
-    schema = read_json(schema)
+    if type(schema) == str:
+        schema = json_processor.read_json(schema)
 
     for i, record in enumerate(data):
         try:
@@ -60,6 +63,44 @@ def validate_jsonl(file_path, schema, transfer_invalid=False):
         logger.info(f"Invalid records written to {invalid_file_path}")
 
     logger.info("Validation process completed.")
+    return True
+
+
+
+def validate_jsonl_line(jsonl_line, schema):
+    """
+    Validates a JSONL file against a JSON schema.
+
+    :param file_path: Path to the JSONL file.
+    :param schema: JSON schema to validate against.
+    :param transfer_invalid: Whether to write invalid records to a separate file.
+    :return: True if validation is successful, otherwise raises a ValidationError.
+    """
+
+    logger.info(f"Validating JSONL line")
+    record = jsonl_line #read_jsonl(file_path)
+    # valid_data = []
+    # invalid_data = []
+    # if type(schema) == str:
+    #     schema = read_json(schema)
+
+
+
+    try:
+        validate(instance=record, schema=schema)
+        
+        logger.info(f"Record is valid.")
+        # valid_data.append(record)
+    except jsonschema.exceptions.ValidationError as e:
+        logger.error(f"Validation error in record : {e.message}")
+        # invalid_data.append(record)
+    
+    # Write valid records back to the original file
+    # write_jsonl(valid_data, file_path)
+
+
+
+    logger.info("Validation of sinle line  process completed.")
     return True
     
 

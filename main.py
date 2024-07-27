@@ -5,7 +5,10 @@ import pyspark.sql.functions as F
 from pyspark.sql import Window
 from utils.logging_config import setup_logging
 from utils.validate_json_schema import validate_jsonl
-from utils.read_pyspark import JSONDataProcessor
+
+
+
+from utils.read_pyspark import JSONpysparkreader
 
 from src.score_images import ImageProcessor
 
@@ -34,18 +37,18 @@ class DataValidator:
 
 class DataLoader:
     """Class to load JSONL files into DataFrames."""
-    def __init__(self, spark):
+    def __init__(self, spark ) :
         self.spark = spark
-        self.df_loader = JSONDataProcessor(spark)
+        self.df_loader = JSONpysparkreader(spark)
 
-    def load_images(self, images_dir):
-        return self.df_loader.load_images(images_dir)
+    def load_images(self, images_dir ,schema):
+        return self.df_loader.load_images(images_dir,schema)
 
-    def load_image_tags(self, image_tags_dir):
-        return self.df_loader.load_images_tags(image_tags_dir)
+    def load_image_tags(self, image_tags_dir,schema):
+        return self.df_loader.load_images_tags(image_tags_dir,schema)
 
-    def load_main_images(self, main_images_dir):
-        return self.df_loader.load_main_images(main_images_dir)
+    def load_main_images(self, main_images_dir,schema):
+        return self.df_loader.load_main_images(main_images_dir,schema)
 
 
 
@@ -64,18 +67,26 @@ class ImageTagProcessor:
     def process(self):
         try:
             # Validate files
-            validator = DataValidator([
-                (self.images_dir, self.images_dir_schema),
-                (self.image_tags_dir, self.image_tags_dir_schema),
-                (self.main_images_dir, self.main_images_dir_schema)
-            ])
-            validator.validate()
+            # validator = DataValidator([
+            #     (self.images_dir, self.images_dir_schema),
+            #     (self.image_tags_dir, self.image_tags_dir_schema),
+            #     (self.main_images_dir, self.main_images_dir_schema)
+            # ])
+            # validator.validate()
 
             # Load data
             loader = DataLoader(self.spark)
-            df_imgs = loader.load_images(self.images_dir).toPandas().to_csv("images.csv")
-            df_tags = loader.load_image_tags(self.image_tags_dir).toPandas().to_csv("images_tags.csv")
-            df_main_imgs = loader.load_main_images(self.main_images_dir).toPandas().to_csv("main_images.csv")
+            df_imgs = loader.load_images(self.images_dir , self.images_dir_schema )#.toPandas().to_csv("images.csv")
+            df_tags = loader.load_image_tags(self.image_tags_dir , self.image_tags_dir_schema)#.toPandas().to_csv("images_tags.csv")
+            df_main_imgs = loader.load_main_images(self.main_images_dir  , self.main_images_dir_schema)#.toPandas().to_csv("main_images.csv")
+
+            ############3
+            ## SHOW DATA
+            df_imgs.show(20 ,False , True)
+            df_tags.show(20 ,False , True)
+            df_main_imgs.show(20 ,False , True)
+
+            #############
 
             # Join data
             df_imgs_tags = df_imgs.join(df_tags, [self.join_col_name] , "left" )
@@ -100,7 +111,11 @@ class ImageTagProcessor:
 
             # exclude not active and deleted images from main
             ## deleted images are images in main that is not foung in images 
-            df_main_tags = df_main_imgs.join(df_imgs , ["hotel_id" , "image_id"] , "inner").join(df_tags, [self.join_col_name] , "left" )
+            df_main_tags = df_main_imgs.join(df_imgs ,
+                                              ["hotel_id" , "image_id"] ,
+                                                "inner").join(df_tags,
+                                                               [self.join_col_name] ,
+                                                                 "left" )
 
 
 

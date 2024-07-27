@@ -2,11 +2,14 @@ from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import explode, col
 from typing import Optional, Union
 
-class JSONDataProcessor:
+from utils.read_json import JSONFileProcessor
+
+class JSONpysparkreader:
     def __init__(self, spark: SparkSession):
         self.spark = spark
+        self.json_processor = JSONFileProcessor()
 
-    def load_json(self, path: str) -> DataFrame:
+    def load_json(self, path: str , schema_path) -> DataFrame:
         """
         Load JSON data into a DataFrame.
 
@@ -16,12 +19,17 @@ class JSONDataProcessor:
         Returns:
         - DataFrame containing the JSON data
         """
-        return self.spark.read.json(path)
+
+        data = self.json_processor.read_jsonl(path , schema_path)
+
+        df = self.spark.createDataFrame(data)
+
+        return df
     
-    def load_images(self , path):
-        return self.load_json( path)
+    def load_images(self , path , schema_path):
+        return self.load_json( path, schema_path)
     
-    def load_images_tags(self, path: str) -> DataFrame:
+    def load_images_tags(self, path: str , schema_path) -> DataFrame:
         """
         Process and flatten image tags JSON data.
 
@@ -31,7 +39,7 @@ class JSONDataProcessor:
         Returns:
         - DataFrame with flattened image tags
         """
-        df = self.load_json(path)
+        df = self.load_json(path,   schema_path)
         return (
             df.withColumn("tags", explode("tags"))
               .select(
@@ -42,7 +50,7 @@ class JSONDataProcessor:
               )
         )
 
-    def load_main_images(self, path: str) -> DataFrame:
+    def load_main_images(self, path: str , schema_path) -> DataFrame:
         """
         Process and flatten main images JSON data.
 
@@ -52,7 +60,7 @@ class JSONDataProcessor:
         Returns:
         - DataFrame with flattened main images data
         """
-        df = self.load_json(path)
+        df = self.load_json(path , schema_path)
         return (
             df.select(
                 col("key.hotel_id").alias("hotel_id"),
@@ -70,17 +78,19 @@ if __name__ == "__main__":
         .getOrCreate()
 
     # Initialize the JSONDataProcessor
-    processor = JSONDataProcessor(spark)
+    processor = JSONpysparkreader(spark)
     
+    # processor.load_json("data/main_images.jsonl" ,"schemas/main_image.json")
+
     # Load and process data
-    images_df = processor.load_json("path/to/images.jsonl")
-    tags_df = processor.process_images_tags("path/to/images_tags.jsonl")
-    main_images_df = processor.process_main_images("path/to/main_images.jsonl")
+    images_df = processor.load_json("data/images.jsonl" , "schemas/image.json")
+    tags_df = processor.load_images_tags("data/image_tags.jsonl" , "schemas/image_tags.json")
+    main_images_df = processor.load_main_images("data/main_images.jsonl", "schemas/main_image.json")
     
     # Show the resulting DataFrames
     images_df.show(truncate=False)
     tags_df.show(truncate=False)
     main_images_df.show(truncate=False)
 
-    # Stop SparkSession
-    spark.stop()
+    # # Stop SparkSession
+    # spark.stop()

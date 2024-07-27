@@ -73,9 +73,9 @@ class ImageTagProcessor:
 
             # Load data
             loader = DataLoader(self.spark)
-            df_imgs = loader.load_images(self.images_dir)
-            df_tags = loader.load_image_tags(self.image_tags_dir)
-            df_main_imgs = loader.load_main_images(self.main_images_dir)
+            df_imgs = loader.load_images(self.images_dir).toPandas().to_csv("images.csv")
+            df_tags = loader.load_image_tags(self.image_tags_dir).toPandas().to_csv("images_tags.csv")
+            df_main_imgs = loader.load_main_images(self.main_images_dir).toPandas().to_csv("main_images.csv")
 
             # Join data
             df_imgs_tags = df_imgs.join(df_tags, [self.join_col_name] , "left" )
@@ -92,22 +92,30 @@ class ImageTagProcessor:
 
 
             # Score images
-            image_score = ImageProcessor(spark ,df_filtered)
+            image_score = ImageProcessor(spark )
             
-            ##################
-             # Create an instance of ImageScorer and execute the process
-            # image_scorer = ImageScorer(spark, df_imgs, df_tags)
-            # main_images_df = image_scorer.execute()
-            # main_images_df.toPandas().to_csv("output/yousra_images_scores.csv")
-            ##################
-            # image_score.process_images().toPandas().to_csv("output/images_scores.csv")
+    
+            df_images_scores = image_score.process_images(df_filtered)#.toPandas().to_csv("output/images_scores.csv")
+
+
+            # exclude not active and deleted images from main
+            ## deleted images are images in main that is not foung in images 
+            df_main_tags = df_main_imgs.join(df_imgs , ["hotel_id" , "image_id"] , "inner").join(df_tags, [self.join_col_name] , "left" )
+
+
 
 
             # Score main images
-            df_main_tags = df_main_imgs.join(df_imgs , ["hotel_id" , "image_id"] , "inner").join(df_tags, [self.join_col_name] , "left" )
-            image_score = ImageProcessor(spark ,df_main_tags)
+            df_main_images_scores = image_score.process_images()#.toPandas().to_csv("output/main_images_scores.csv")
 
-            image_score.process_images().toPandas().to_csv("output/main_images_scores.csv")
+
+            # Compare results of main images 
+
+
+            # Update main images 
+
+
+            # Extract metrics 
 
 
 

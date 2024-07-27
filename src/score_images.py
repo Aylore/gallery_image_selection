@@ -24,13 +24,13 @@ WEIGHT_TAG_PRIORITY = 3
 class ImageProcessor:
     """Class for processing and scoring images."""
 
-    def __init__(self, spark, images_df):
+    def __init__(self, spark):
         self.spark = spark
-        self.images_df = images_df
+        # self.images_df = images_df
 
-    def process_images(self):
+    def process_images(self, images_df):
         # Convert created_at to timestamp
-        images_df = self.images_df.withColumn("created_at", F.col("created_at").cast("timestamp"))
+        images_df = images_df.withColumn("created_at", F.col("created_at").cast("timestamp"))
 
         # Calculate features
         images_df = images_df \
@@ -85,8 +85,8 @@ def main():
     images_df = spark.read.schema(images_schema).json("path_to_images_jsonl")
 
     # Process images
-    processor = ImageProcessor(spark, images_df)
-    result_df = processor.process_images()
+    processor = ImageProcessor(spark)
+    result_df = processor.process_images( images_df)
 
     # Show results
     result_df.show(truncate=False)

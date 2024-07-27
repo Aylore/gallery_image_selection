@@ -9,6 +9,11 @@ from utils.read_pyspark import JSONDataProcessor
 
 from src.score_images import ImageProcessor
 
+
+
+## test yousra scoring logic
+from src.yousra_score_images import ImageScorer
+
 # Setup logging configuration
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -88,7 +93,24 @@ class ImageTagProcessor:
 
             # Score images
             image_score = ImageProcessor(spark ,df_filtered)
-            image_score.process_images().toPandas().to_csv("output/images_scores.csv")
+            
+            ##################
+             # Create an instance of ImageScorer and execute the process
+            # image_scorer = ImageScorer(spark, df_imgs, df_tags)
+            # main_images_df = image_scorer.execute()
+            # main_images_df.toPandas().to_csv("output/yousra_images_scores.csv")
+            ##################
+            # image_score.process_images().toPandas().to_csv("output/images_scores.csv")
+
+
+            # Score main images
+            df_main_tags = df_main_imgs.join(df_imgs , ["hotel_id" , "image_id"] , "inner").join(df_tags, [self.join_col_name] , "left" )
+            image_score = ImageProcessor(spark ,df_main_tags)
+
+            image_score.process_images().toPandas().to_csv("output/main_images_scores.csv")
+
+
+
         except Exception as ex:
             logger.error(f"An error occurred: {ex}")
             raise

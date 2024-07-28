@@ -56,9 +56,9 @@ class ImageProcessor:
         images_df = images_df.withColumn("rank", F.row_number().over(window_spec))
         
         # Select the highest scored image for each hotel_id
-        images_df = images_df.filter(F.col("rank") == 1).drop("rank")
+        # images_df = images_df.filter(F.col("rank") == 1).drop("rank")
 
-        return images_df
+        return images_df#.drop("rank")
 
 def main():
     # Initialize Spark session

@@ -82,9 +82,9 @@ class ImageTagProcessor:
 
             ############3
             ## SHOW DATA
-            df_imgs.show(20 ,False , True)
-            df_tags.show(20 ,False , True)
-            df_main_imgs.show(20 ,False , True)
+            # df_imgs.show(20 ,False , True)
+            # df_tags.show(20 ,False , True)
+            # df_main_imgs.show(20 ,False , True)
 
             #############
 
@@ -100,28 +100,91 @@ class ImageTagProcessor:
 
             # Filter rows to get only the highest-ranked rows for each image_id
             df_filtered = df_ranked.filter(F.col("rank") == 1).drop("rank")
-
+            
+            df_filtered_active = df_filtered.withColumn("change_type", 
+                                                      F.when(F.col("is_active").cast("boolean")  == False, "inactive")\
+                                                        .when(F.col("is_active").cast("boolean").isNull() , "deleted")\
+                                                            .otherwise("other")).filter(F.col("change_type") != "inactive")
 
             # Score images
             image_score = ImageProcessor(spark )
             
     
-            df_images_scores = image_score.process_images(df_filtered)#.toPandas().to_csv("output/images_scores.csv")
-
-
-            # exclude not active and deleted images from main
-            ## deleted images are images in main that is not foung in images 
-            df_main_tags = df_main_imgs.join(df_imgs ,
-                                              ["hotel_id" , "image_id"] ,
-                                                "inner").join(df_tags,
-                                                               [self.join_col_name] ,
-                                                                 "left" )
+            df_image_scored = image_score.process_images(df_filtered_active)#.toPandas().to_csv("output/images_scores.csv")
 
 
 
 
-            # Score main images
-            df_main_images_scores = image_score.process_images()#.toPandas().to_csv("output/main_images_scores.csv")
+
+
+
+            ## join main images with images 
+            df_main_with_images = df_main_imgs.drop( "cdn_url").join(df_imgs.drop("hotel_id" ),
+                                                     on= "image_id",
+                                                       how= "left")
+
+            ## get image status for each image deleted active not active 
+            df_main_with_images =  df_main_with_images.withColumn("change_type", 
+                                                      F.when(F.col("is_active").cast("boolean")  == False, "inactive")\
+                                                        .when(F.col("is_active").cast("boolean").isNull() , "deleted")\
+                                                            .otherwise("other"))
+
+
+            ## join the images scores with main_images
+            # df_main_scored = df_main_with_images.join(df_image_scored.select("hotel_id" ,
+            #                                                                   F.col("image_id").alias("old_image_id") ,
+            #                                                                   "image_score"),
+            #                                            on= "hotel_id",
+            #                                              how= "left")
+
+            df_main_scored = df_main_with_images.join(df_image_scored.select(F.col("image_id") ,
+                                                                              F.col("image_score").alias("old_image_score")),
+                                                       on= "image_id",
+                                                         how= "left")
+
+
+            df_main_scored = df_main_scored.join(df_image_scored.filter(F.col("rank") == 1).drop("rank")\
+                                                 .select("hotel_id", F.col("image_id").alias("new_image_id"),
+                                                         F.col("image_score").alias("new_image_score")),
+                                                                              "hotel_id",
+                                                                              "left")
+
+
+
+            ## GET updated main_images 
+
+            df_main_images_updated  = df_main_scored.select(F.col("new_image_id").alias("image_id"),
+                                                            F.col("new_image_score").alias("image_score"),
+                                                            "hotel_id",
+                                                            "cdn_url")
+
+
+
+            # df_main_scored.toPandas().to_csv("output/main_images_with_the_hotel_max_scored_image_with_old_image_score_inactive_filter.csv")
+
+            # df_main_scored.withColumn("hotel_image_status" , F.when("image_score"))
+
+            ## For change_type `other`  we need to compare the old score with the new image score
+
+
+
+
+
+
+            ## join main images with image scored to get the hotels in images that doesnt exist in main_images
+            df_new_hotels= df_image_scored.join(df_main_imgs, on = "hotel_id", how= "left_anti")
+
+
+            hotels_with_images = df_imgs.join(df_main_imgs.drop("hotel_id" , "cdn_url"), on="image_id")\
+                .filter(F.col("is_active").cast("boolean") != False)\
+                    .select("hotel_id").distinct()
+            
+            # hotels_with_images.show(20 , False , True)
+
+
+            deleted_main_images = df_main_with_images.filter(F.col("change_type") == "deleted").count()
+
+            # print(deleted_main_images)
 
 
             # Compare results of main images 
@@ -131,9 +194,40 @@ class ImageTagProcessor:
 
 
             # Extract metrics 
+            no_images_processed = df_image_scored.select("image_id").distinct().count()
+
+            df_main_scored = df_main_scored.withColumn(
+                "updated",
+                F.when(F.col("change_type") == "deleted", True)
+                .when(F.col("change_type") == "inactive", True)
+                .when((F.col("change_type") == "other") & (F.col("image_id") != F.col("new_image_id")), True)
+                .otherwise(False)
+)           
+            df_main_scored.groupBy("updated").count().show()
+
+
+            df_imgs.select(F.col("is_active").cast("boolean")).distinct().show()
+
+            hotels_with_images = df_imgs.drop("hotel_id").join(df_main_imgs, on="image_id") \
+                .filter(F.col("is_active").cast("boolean") != False) \
+                .select("hotel_id").distinct()
+
+            df_new_hotels = df_image_scored.join(df_main_imgs, on="hotel_id", how="left_anti")
 
 
 
+
+            df_transformed = df_main_images_updated.select(
+                  F.struct(F.col("hotel_id").alias("hotel_id")).alias("key"),
+                    F.struct(
+                        F.col("image_id").alias("image_id"),
+                        F.col("cdn_url").alias("cdn_url")
+                    ).alias("value")
+                )
+
+            df_transformed.write.mode('overwrite').json("output/updated_main_images.jsonl", lineSep='\n')
+
+            
         except Exception as ex:
             logger.error(f"An error occurred: {ex}")
             raise
